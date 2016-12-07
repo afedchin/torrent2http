@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	Version string = "1.0.6" // TODO from git tag
+	Version string = "1.1.0" // TODO from git tag
 )
 
 func UserAgent() string {
