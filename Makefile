@@ -1,15 +1,22 @@
 CC = cc
 CXX = c++
-PLATFORMS = android-arm \
+STRIP = strip
+
+PLATFORMS = \
+	android-arm \
+	android-x64 \
+	android-x86 \
 	darwin-x64 \
-	linux-x86 \
-	linux-x64 \
 	linux-arm \
-	windows-x86 \
-	windows-x64
+	linux-armv7 \
+	linux-arm64 \
+	linux-x64 \
+	linux-x86 \
+	windows-x64 \
+	windows-x86
 
 DOCKER = docker
-DOCKER_IMAGE = anteo/libtorrent-go
+DOCKER_IMAGE = quasarhq/libtorrent-go
 GO_PACKAGE_NS = github.com/anteo
 
 include platform_host.mk
@@ -17,6 +24,7 @@ include platform_host.mk
 ifneq ($(CROSS_TRIPLE),)
 	CC := $(CROSS_TRIPLE)-$(CC)
 	CXX := $(CROSS_TRIPLE)-$(CXX)
+	STRIP := $(CROSS_TRIPLE)-strip
 endif
 
 include platform_target.mk
@@ -27,7 +35,14 @@ else ifeq ($(TARGET_ARCH),x64)
 	GOARCH = amd64
 else ifeq ($(TARGET_ARCH),arm)
 	GOARCH = arm
+	GOARM = 6
+else ifeq ($(TARGET_ARCH), armv7)
+	GOARCH = arm
 	GOARM = 7
+	PKGDIR = -pkgdir /go/pkg/linux_armv7
+else ifeq ($(TARGET_ARCH), arm64)
+	GOARCH = arm64
+	GOARM =
 endif
 
 BUILDMODE = default
@@ -47,6 +62,11 @@ else ifeq ($(TARGET_OS), android)
 	EXT =
 	GOOS = android
 	LDFLAGS := $(LDFLAGS) -linkmode=external -extld=$(CC) -extldflags=-lstdc++
+	ifeq ($(TARGET_ARCH), arm)
+		GOARM = 7
+	else
+		GOARM =
+	endif
 	BUILDMODE = pie
 endif
 
@@ -56,21 +76,68 @@ CGO_ENABLED = 1
 OUTPUT_NAME = $(NAME)$(EXT)
 BUILD_PATH = build/$(TARGET_OS)_$(TARGET_ARCH)
 LIBRARY_PATH = $(GOPATH)/pkg/$(GOOS)_$(GOARCH)/$(GO_PACKAGE_NS)
+UPX = upx
 
 .PHONY: $(PLATFORMS)
 
 all: $(PLATFORMS)
 
 $(PLATFORMS):
-	$(DOCKER) run -it --rm -v $(HOME):$(HOME) -v /tmp:/tmp -t -e GOPATH=$(GOPATH) -w $(shell pwd) $(DOCKER_IMAGE):$@ make clean dist;
+	$(DOCKER) run -it --rm -v $(GOPATH):/go -e GOPATH=/go -v /tmp:/tmp -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$@ make clean dist;
 
 $(BUILD_PATH):
 	mkdir -p $(BUILD_PATH)
 
 $(BUILD_PATH)/$(OUTPUT_NAME): $(BUILD_PATH)
-	CC=$(CC) GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) CGO_ENABLED=$(CGO_ENABLED) $(GO) build -v -x -o $(BUILD_PATH)/$(OUTPUT_NAME) -ldflags="$(LDFLAGS)" -buildmode=$(BUILDMODE)
+	CC=$(CC) \
+	GOOS=$(GOOS) GOARCH=$(GOARCH) GOARM=$(GOARM) \
+	CGO_ENABLED=$(CGO_ENABLED) \
+	$(GO) build -v -x \
+		-o $(BUILD_PATH)/$(OUTPUT_NAME) \
+		-ldflags="$(LDFLAGS)" \
+		$(PKGDIR)
 
-dist: $(BUILD_PATH)/$(OUTPUT_NAME)
+vendor_darwin vendor_linux:
+
+vendor_windows:
+	find $(shell go env GOPATH)/pkg/$(GOOS)_$(GOARCH) -name *.dll -exec cp -f {} $(BUILD_PATH) \;
+
+vendor_android:
+	cp $(CROSS_ROOT)/$(CROSS_TRIPLE)/lib/libgnustl_shared.so $(BUILD_PATH)
+	chmod +rx $(BUILD_PATH)/libgnustl_shared.so
+
+t2h: $(BUILD_PATH)/$(OUTPUT_NAME)
+
+re: clean build
 
 clean:
 	rm -rf $(BUILD_PATH)
+
+distclean:
+	rm -rf build
+
+build:
+	$(DOCKER) run --rm -v $(GOPATH):/go -e GOPATH=/go -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$(TARGET_OS)-$(TARGET_ARCH) make dist TARGET_OS=$(TARGET_OS) TARGET_ARCH=$(TARGET_ARCH) GIT_VERSION=$(GIT_VERSION)
+
+docker:
+	$(DOCKER) run --rm -v $(GOPATH):/go -e GOPATH=/go -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$(TARGET_OS)-$(TARGET_ARCH)
+
+strip:
+	@find $(BUILD_PATH) -type f ! -name "*.xxx" -exec $(STRIP) {} \;
+
+upx:
+# Do not .exe files, as upx doesn't really work with 8l/6l linked files.
+# It's fine for other platforms, because we link with an external linker, namely
+# GCC or Clang. However, on Windows this feature is not yet supported.
+	@find $(BUILD_PATH) -type f ! -name "*.exe" -a ! -name "*.so" -exec $(UPX) --lzma {} \;
+
+checksum: $(BUILD_PATH)/$(OUTPUT_NAME)
+	shasum -b $(BUILD_PATH)/$(OUTPUT_NAME) | cut -d' ' -f1 >> $(BUILD_PATH)/$(OUTPUT_NAME)
+
+ifeq ($(TARGET_ARCH), arm)
+dist: t2h vendor_$(TARGET_OS) strip checksum
+else ifeq ($(TARGET_OS), darwin)
+dist: t2h vendor_$(TARGET_OS) strip checksum
+else
+dist: t2h vendor_$(TARGET_OS) strip upx checksum
+endif
