@@ -8,7 +8,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -121,9 +120,7 @@ var (
 	torrentInfo              lt.TorrentInfo
 	torrentFS                *TorrentFS
 	forceShutdown            chan bool
-	httpListener             net.Listener
-	chosenFile               lt.FileEntry
-	chosenIndex              int
+	fileEntryIdx             int
 	bufferPiecesProgressLock sync.RWMutex
 	bufferPiecesProgress     = make(map[int]float64)
 )
@@ -184,7 +181,7 @@ func lsHandler(w http.ResponseWriter, _ *http.Request) {
 	retFiles := LsInfo{}
 
 	if torrentHandle.IsValid() && torrentInfo != nil {
-		if chosenIndex >= 0 && chosenIndex < torrentInfo.NumFiles() {
+		if fileEntryIdx >= 0 && fileEntryIdx < torrentInfo.NumFiles() {
 			state := torrentHandle.Status().GetState()
 			bufferProgress := float64(0)
 			if state != STATE_CHECKING_FILES && state != STATE_QUEUED_FOR_CHECKING {
@@ -201,7 +198,7 @@ func lsHandler(w http.ResponseWriter, _ *http.Request) {
 				bufferPiecesProgressLock.Unlock()
 			}
 
-			fileEntry := torrentInfo.FileAt(chosenIndex)
+			fileEntry := torrentInfo.FileAt(fileEntryIdx)
 			path, _ := filepath.Abs(path.Join(config.downloadPath, fileEntry.GetPath()))
 
 			url := url.URL{
@@ -410,7 +407,7 @@ func parseFlags() {
 	}
 }
 
-func NewConnectionCounterHandler(connTrackChannel chan int, handler http.Handler) http.Handler {
+func connectionCounterHandler(connTrackChannel chan int, handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connTrackChannel <- 1
 		handler.ServeHTTP(w, r)
@@ -420,7 +417,6 @@ func NewConnectionCounterHandler(connTrackChannel chan int, handler http.Handler
 
 func inactiveAutoShutdown(connTrackChannel chan int) {
 	activeConnections := 0
-
 	for {
 		if activeConnections == 0 {
 			select {
@@ -438,33 +434,25 @@ func inactiveAutoShutdown(connTrackChannel chan int) {
 func startHTTP() {
 	log.Println("starting HTTP Server...")
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/status", statusHandler)
-	mux.HandleFunc("/ls", lsHandler)
-	mux.HandleFunc("/shutdown", func(w http.ResponseWriter, _ *http.Request) {
+	http.HandleFunc("/status", statusHandler)
+	http.HandleFunc("/ls", lsHandler)
+	http.HandleFunc("/shutdown", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, "OK")
 		forceShutdown <- true
 	})
-	mux.Handle("/files/", http.StripPrefix("/files/", http.FileServer(torrentFS)))
+	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(torrentFS)))
 
-	handler := http.Handler(mux)
+	handler := http.Handler(http.DefaultServeMux)
 	if config.idleTimeout > 0 {
 		connTrackChannel := make(chan int, 10)
-		handler = NewConnectionCounterHandler(connTrackChannel, mux)
+		handler = connectionCounterHandler(connTrackChannel, handler)
 		go inactiveAutoShutdown(connTrackChannel)
 	}
 
 	log.Printf("listening HTTP on %s\n", config.bindAddress)
-	s := &http.Server{
-		Addr:    config.bindAddress,
-		Handler: handler,
+	if err := http.ListenAndServe(config.bindAddress, handler); err != nil {
+		log.Fatal(err)
 	}
-
-	var e error
-	if httpListener, e = net.Listen("tcp", config.bindAddress); e != nil {
-		log.Fatal(e)
-	}
-	go s.Serve(httpListener)
 }
 
 func popAlert(logAlert bool) lt.Alert {
@@ -759,13 +747,13 @@ func chooseFile() (lt.FileEntry, int) {
 
 	if config.fileIndex >= 0 {
 		if _, ok := candidateFiles[config.fileIndex]; ok {
-			log.Printf("selecting file at selecting requested file (%d)", config.fileIndex)
+			log.Printf("selecting requested file at position %d", config.fileIndex)
 			return torrentInfo.FileAt(config.fileIndex), config.fileIndex
 		}
 		log.Print("unable to select requested file")
 	}
 
-	log.Printf("selecting most biggest file (%d with size %dkB)", biggestFileIndex, maxSize/1024)
+	log.Printf("selecting most biggest file (position:%d size:%dkB)", biggestFileIndex, maxSize/1024)
 	return biggestFile, biggestFileIndex
 }
 
@@ -824,12 +812,13 @@ func onMetadataReceived() {
 
 	torrentInfo = torrentHandle.TorrentFile()
 
-	chosenFile, chosenIndex = chooseFile()
+	file, idx := chooseFile()
+	fileEntryIdx = idx
 
 	log.Print("setting piece priorities")
 
 	pieceLength := float64(torrentInfo.PieceLength())
-	startPiece, endPiece, _ := getFilePiecesAndOffset(chosenFile)
+	startPiece, endPiece, _ := getFilePiecesAndOffset(file)
 
 	startLength := float64(endPiece-startPiece) * float64(pieceLength) * config.buffer
 	startBufferPieces := int(math.Ceil(startLength / pieceLength))
@@ -896,15 +885,16 @@ func piecesProgress(pieces map[int]float64) {
 	}
 }
 
-func loop() {
+func handleSignals() {
 	forceShutdown = make(chan bool, 1)
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
 	saveResumeDataTicker := time.Tick(30 * time.Second)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+
 	for {
 		select {
 		case <-forceShutdown:
-			httpListener.Close()
+			shutdown()
 			return
 		case <-signalChan:
 			forceShutdown <- true
@@ -933,7 +923,6 @@ func main() {
 	startServices()
 	addTorrent(buildTorrentParams(config.uri))
 
+	go handleSignals()
 	startHTTP()
-	loop()
-	shutdown()
 }
