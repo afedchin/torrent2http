@@ -15,10 +15,6 @@ PLATFORMS = \
 	windows-x64 \
 	windows-x86
 
-DOCKER = docker
-DOCKER_IMAGE = quasarhq/libtorrent-go
-GO_PACKAGE_NS = github.com/anteo
-
 include platform_host.mk
 
 ifneq ($(CROSS_TRIPLE),)
@@ -70,20 +66,29 @@ else ifeq ($(TARGET_OS), android)
 	BUILDMODE = pie
 endif
 
+DOCKER = docker
+DOCKER_IMAGE = quasarhq/libtorrent-go
+GO_PACKAGE_NS = github.com/afedchin
 NAME = torrent2http
 GO = go
+UPX = upx
 CGO_ENABLED = 1
+GIT = git
+GIT_VERSION = $(shell $(GIT) describe --tags)
 OUTPUT_NAME = $(NAME)$(EXT)
 BUILD_PATH = build/$(TARGET_OS)_$(TARGET_ARCH)
-LIBRARY_PATH = $(GOPATH)/pkg/$(GOOS)_$(GOARCH)/$(GO_PACKAGE_NS)
-UPX = upx
+LIBTORRENT_GO = github.com/scakemyer/libtorrent-go
+LIBTORRENT_GO_HOME = $(shell go env GOPATH)/src/$(LIBTORRENT_GO)
 
 .PHONY: $(PLATFORMS)
 
 all: $(PLATFORMS)
 
 $(PLATFORMS):
-	$(DOCKER) run -it --rm -v $(GOPATH):/go -e GOPATH=/go -v /tmp:/tmp -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$@ make clean dist;
+	$(MAKE) build TARGET_OS=$(firstword $(subst -, ,$@)) TARGET_ARCH=$(word 2, $(subst -, ,$@))
+
+libtorrent-go: 
+	$(MAKE) -C $(LIBTORRENT_GO_HOME) $(PLATFORM)
 
 $(BUILD_PATH):
 	mkdir -p $(BUILD_PATH)
@@ -119,9 +124,6 @@ distclean:
 build:
 	$(DOCKER) run --rm -v $(GOPATH):/go -e GOPATH=/go -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$(TARGET_OS)-$(TARGET_ARCH) make dist TARGET_OS=$(TARGET_OS) TARGET_ARCH=$(TARGET_ARCH) GIT_VERSION=$(GIT_VERSION)
 
-docker:
-	$(DOCKER) run --rm -v $(GOPATH):/go -e GOPATH=/go -v $(shell pwd):/go/src/$(GO_PACKAGE_NS)/$(NAME) -w /go/src/$(GO_PACKAGE_NS)/$(NAME) $(DOCKER_IMAGE):$(TARGET_OS)-$(TARGET_ARCH)
-
 strip:
 	@find $(BUILD_PATH) -type f ! -name "*.xxx" -exec $(STRIP) {} \;
 
@@ -141,3 +143,16 @@ dist: t2h vendor_$(TARGET_OS) strip checksum
 else
 dist: t2h vendor_$(TARGET_OS) strip upx checksum
 endif
+
+libs:
+	$(MAKE) libtorrent-go PLATFORM=$(PLATFORM)
+
+binaries:
+	$(GIT) config --global push.default simple
+	$(GIT) clone --depth=1 https://github.com/afedchin/t2h-binaries binaries
+	cp -Rf build/* binaries/
+	cd binaries && git add * && $(GIT) commit -m "Update to ${GIT_VERSION}"
+
+pull:
+	docker pull $(DOCKER_IMAGE):$(PLATFORM)
+	docker tag $(DOCKER_IMAGE):$(PLATFORM) libtorrent-go:$(PLATFORM)
