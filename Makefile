@@ -45,7 +45,9 @@ BUILDMODE = default
 ifeq ($(TARGET_OS), windows)
 	EXT = .exe
 	GOOS = windows
-	LDFLAGS := $(LDFLAGS) -linkmode=external -extld=$(CC) '-extldflags=-lstdc++ -static'
+	# TODO Remove '-Wl,--allow-multiple-definition' for golang 1.8
+	# https://github.com/golang/go/issues/8756
+	LDFLAGS := $(LDFLAGS) -linkmode=external -extld=$(CC) '-extldflags=-lstdc++ -static -Wl,--allow-multiple-definition' -v
 else ifeq ($(TARGET_OS), darwin)
 	EXT =
 	GOOS = darwin
@@ -137,6 +139,10 @@ checksum: $(BUILD_PATH)/$(OUTPUT_NAME)
 	shasum -b $(BUILD_PATH)/$(OUTPUT_NAME) | cut -d' ' -f1 >> $(BUILD_PATH)/$(OUTPUT_NAME)
 
 ifeq ($(TARGET_ARCH), arm)
+dist: t2h vendor_$(TARGET_OS) strip checksum
+else ifeq ($(TARGET_ARCH), armv7)
+dist: t2h vendor_$(TARGET_OS) strip checksum
+else ifeq ($(TARGET_ARCH), arm64)
 dist: t2h vendor_$(TARGET_OS) strip checksum
 else ifeq ($(TARGET_OS), darwin)
 dist: t2h vendor_$(TARGET_OS) strip checksum

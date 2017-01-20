@@ -17,10 +17,8 @@ const (
 // (or, rather, a single cpu arm machine, no need to be specific to RPi) and
 // set those limits.
 // See https://github.com/steeve/plugin.video.pulsar/issues/24
-func setPlatformSpecificSettings(settings lt.SessionSettings) {
+func setPlatformSpecificSettings(settings lt.SettingsPack) {
 	if runtime.NumCPU() == 1 { // single core?
-        if limit := settings.GetConnectionsLimit(); limit <= 0 || limit > maxSingleCoreConnections { // current limit is in range
-		    settings.SetConnectionsLimit(maxSingleCoreConnections)
-        }
+		settings.SetInt(lt.SettingByName("connections_limit"), maxSingleCoreConnections)
 	}
 }

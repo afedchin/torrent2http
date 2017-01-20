@@ -27,7 +27,6 @@ type TorrentFile struct {
 	*os.File
 	tfs               *TorrentFS
 	torrentInfo       lt.TorrentInfo
-	fileEntry         lt.FileEntry
 	fileEntryIdx      int
 	pieceLength       int
 	fileOffset        int64
@@ -65,10 +64,12 @@ func (tfs *TorrentFS) Open(name string) (http.File, error) {
 
 	torrentInfo := tfs.handle.TorrentFile()
 	numFiles := torrentInfo.NumFiles()
+	files := torrentInfo.Files()
+
 	for j := 0; j < numFiles; j++ {
-		fe := torrentInfo.FileAt(j)
-		if name[1:] == fe.GetPath() {
-			return NewTorrentFile(file, tfs, torrentInfo, fe, j)
+		path := files.FilePath(j)
+		if name[1:] == path {
+			return NewTorrentFile(file, tfs, torrentInfo, j, files.FileOffset(j), files.FileSize(j), path)
 		}
 	}
 	defer lt.DeleteTorrentInfo(torrentInfo)
@@ -76,18 +77,17 @@ func (tfs *TorrentFS) Open(name string) (http.File, error) {
 	return file, err
 }
 
-func NewTorrentFile(file *os.File, tfs *TorrentFS, torrentInfo lt.TorrentInfo, fileEntry lt.FileEntry, fileEntryIdx int) (*TorrentFile, error) {
+func NewTorrentFile(file *os.File, tfs *TorrentFS, torrentInfo lt.TorrentInfo, fileEntryIdx int, offset int64, size int64, path string) (*TorrentFile, error) {
 	tf := &TorrentFile{
 		File:         file,
 		tfs:          tfs,
 		torrentInfo:  torrentInfo,
-		fileEntry:    fileEntry,
 		fileEntryIdx: fileEntryIdx,
 		pieceLength:  torrentInfo.PieceLength(),
-		fileOffset:   fileEntry.GetOffset(),
-		fileSize:     fileEntry.GetSize(),
+		fileOffset:   offset,
+		fileSize:     size,
 	}
-	tf.log("opening file %s", fileEntry.GetPath())
+	tf.log("opening file %s", path)
 	return tf, nil
 }
 
@@ -216,17 +216,17 @@ func (tf *TorrentFile) Seek(offset int64, whence int) (int64, error) {
 			buffPieces = endPiece - piece
 		}
 		for _ = 0; curPiece < piece; curPiece++ {
-			piecesPriorities.PushBack(0)
+			piecesPriorities.Add(0)
 		}
 		for _ = 0; curPiece < piece+buffPieces; curPiece++ { //highest priority for buffer
-			piecesPriorities.PushBack(7)
+			piecesPriorities.Add(7)
 			tf.tfs.handle.SetPieceDeadline(curPiece, 0, 0)
 		}
 		for _ = 0; curPiece <= endPiece; curPiece++ { // to the end of a file
-			piecesPriorities.PushBack(1)
+			piecesPriorities.Add(1)
 		}
 		for _ = 0; curPiece < numPieces; curPiece++ {
-			piecesPriorities.PushBack(0)
+			piecesPriorities.Add(0)
 		}
 		tf.tfs.handle.PrioritizePieces(piecesPriorities)
 	}
@@ -238,7 +238,8 @@ func (tf *TorrentFile) Close() (err error) {
 	if tf.closed {
 		return
 	}
-	tf.log("closing %s...", tf.fileEntry.GetPath())
+	files := torrentInfo.Files()
+	tf.log("closing %s...", files.FilePath(fileEntryIdx))
 	tf.closed = true
 	if tf.File != nil {
 		err = tf.File.Close()

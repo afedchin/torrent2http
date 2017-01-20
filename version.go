@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	lt "github.com/scakemyer/libtorrent-go"
+	"github.com/scakemyer/libtorrent-go"
 )
 
 var (
@@ -11,5 +11,5 @@ var (
 )
 
 func UserAgent() string {
-	return fmt.Sprintf("torrent2http/%s libtorrent/%s", Version, lt.LIBTORRENT_VERSION)
+	return fmt.Sprintf("torrent2http/%s libtorrent/%s", Version, libtorrent.Version())
 }
