@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -684,6 +686,18 @@ func startSession() {
 	settings.SetInt(lt.SettingByName("min_reconnect_time"), config.minReconnectTime)
 	settings.SetInt(lt.SettingByName("min_reconnect_time"), config.minReconnectTime)
 	settings.SetInt(lt.SettingByName("max_failcount"), config.maxFailCount)
+
+	portLower := config.listenPort
+	if config.randomPort {
+		rand.Seed(time.Now().UnixNano())
+		portLower = rand.Intn(16374) + 49152
+	}
+	var listenPorts []string
+	for p := portLower; p <= portLower+10; p++ {
+		listenPorts = append(listenPorts, strconv.Itoa(p))
+	}
+	listenInterfaces := "0.0.0.0:" + strings.Join(listenPorts, ",0.0.0.0:")
+	settings.SetStr(lt.SettingByName("listen_interfaces"), listenInterfaces)
 
 	if config.connectionsLimit >= 0 {
 		settings.SetInt(lt.SettingByName("connections_limit"), config.connectionsLimit)
