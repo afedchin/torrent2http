@@ -112,6 +112,7 @@ type Config struct {
 	dhtRouters          string
 	trackers            string
 	buffer              float64
+	tunedStorage        bool
 }
 
 const (
@@ -433,6 +434,7 @@ func parseFlags() {
 	flag.BoolVar(&config.enableNATPMP, "enable-natpmp", true, "Enable NATPMP (NAT port-mapping)")
 	flag.BoolVar(&config.enableUTP, "enable-utp", true, "Enable uTP protocol")
 	flag.BoolVar(&config.enableTCP, "enable-tcp", true, "Enable TCP protocol")
+	flag.BoolVar(&config.tunedStorage, "tuned-storage", false, "Enable storage optimizations for Android external storage / OS-mounted NAS setups")
 	flag.Float64Var(&config.buffer, "buffer", startBufferPercent, "Buffer percentage from start of file")
 	flag.Parse()
 
@@ -686,6 +688,14 @@ func startSession() {
 	settings.SetInt(lt.SettingByName("min_reconnect_time"), config.minReconnectTime)
 	settings.SetInt(lt.SettingByName("min_reconnect_time"), config.minReconnectTime)
 	settings.SetInt(lt.SettingByName("max_failcount"), config.maxFailCount)
+
+	if config.tunedStorage {
+		settings.SetBool(lt.SettingByName("use_read_cache"), true)
+		settings.SetBool(lt.SettingByName("coalesce_reads"), true)
+		settings.SetBool(lt.SettingByName("coalesce_writes"), true)
+		settings.SetInt(lt.SettingByName("max_queued_disk_bytes"), 10*1024*1024)
+		settings.SetInt(lt.SettingByName("cache_size"), -1)
+	}
 
 	portLower := config.listenPort
 	if config.randomPort {
