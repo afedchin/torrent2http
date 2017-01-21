@@ -592,10 +592,8 @@ func buildTorrentParams(uri string) lt.AddTorrentParams {
 		} else {
 			resumeData := lt.NewStdVectorChar()
 			defer lt.DeleteStdVectorChar(resumeData)
-			count := 0
 			for _, byte := range bytes {
 				resumeData.Add(byte)
-				count++
 			}
 			torrentParams.SetResumeData(resumeData)
 		}
@@ -611,15 +609,15 @@ func buildTorrentParams(uri string) lt.AddTorrentParams {
 
 func startServices() {
 	if config.enableDHT {
-		bootstrap_nodes := ""
+		bootstrapNodes := ""
 		if config.dhtRouters != "" {
-			bootstrap_nodes = config.dhtRouters
+			bootstrapNodes = config.dhtRouters
 		} else {
-			bootstrap_nodes = strings.Join(dhtBootstrapNodes, ":6881,") + ":6881"
+			bootstrapNodes = strings.Join(dhtBootstrapNodes, ":6881,") + ":6881"
 		}
-		if bootstrap_nodes != "" {
+		if bootstrapNodes != "" {
 			log.Println("starting DHT...")
-			packSettings.SetStr(lt.SettingByName("dht_bootstrap_nodes"), bootstrap_nodes)
+			packSettings.SetStr(lt.SettingByName("dht_bootstrap_nodes"), bootstrapNodes)
 			packSettings.SetBool(lt.SettingByName("enable_dht"), true)
 		}
 	}
